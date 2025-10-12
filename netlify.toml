@@ -1,0 +1,8 @@
+[build]
+  publish = "."
+  command = "echo 'No build required for static HTML'"
+
+[[redirects]]
+  from = "/*"
+  to = "/ONE2.HTML"
+  status = 200
