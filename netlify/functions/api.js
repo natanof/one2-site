@@ -1,8 +1,8 @@
 const express = require('express');
-const { Sequelize } = require('sequelize');
+const mongoose = require('mongoose');
 const cors = require('cors');
-const path = require('path');
-const fs = require('fs');
+const serverless = require('serverless-http');
+require('dotenv').config();
 
 const app = express();
 
@@ -14,75 +14,26 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Database connection (usando SQLite em memória para Netlify)
-const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: ':memory:', // SQLite em memória para Netlify
-  logging: false,
-  define: {
-    timestamps: true,
-    underscored: true,
-  },
-});
-
-// Importar modelos
-const DeviceModel = require('../../backend/models/DeviceModel.model.js');
-const Service = require('../../backend/models/Service.model.js');
-const StockItem = require('../../backend/models/StockItem.model.js');
-const Order = require('../../backend/models/Order.model.js');
-const CommonIssue = require('../../backend/models/CommonIssue.model.js');
-const CustomCase = require('../../backend/models/CustomCase.model.js');
-
-// Inicializar modelos
-DeviceModel.init(sequelize);
-Service.init(sequelize);
-StockItem.init(sequelize);
-Order.init(sequelize);
-CommonIssue.init(sequelize);
-CustomCase.init(sequelize);
-
-// Definir associações
-DeviceModel.associate(sequelize.models);
-Service.associate(sequelize.models);
-StockItem.associate(sequelize.models);
-Order.associate(sequelize.models);
-CommonIssue.associate(sequelize.models);
-CustomCase.associate(sequelize.models);
-
-// Sincronizar banco de dados
-sequelize.sync({ force: true }).then(() => {
-  console.log('Database synchronized');
+// Database connection
+const connectDB = async () => {
+  if (mongoose.connection.readyState >= 1) return;
   
-  // Inserir dados padrão
-  const defaultModels = [
-    { brand: 'Apple', name: 'iPhone 15 Pro Max' },
-    { brand: 'Samsung', name: 'Galaxy S23 Ultra' },
-    { brand: 'Xiaomi', name: 'Redmi Note 12' }
-  ];
+  try {
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/one2', {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('MongoDB connected successfully');
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  }
+};
 
-  const defaultServices = [
-    { name: 'Troca de Tela', price: 350.00 },
-    { name: 'Troca de Bateria', price: 120.00 },
-    { name: 'Desoxidação', price: 80.00 }
-  ];
+// Connect to MongoDB
+connectDB();
 
-  const defaultStock = [
-    { name: 'Tela iPhone 12', quantity: 5, cost: 250.00 },
-    { name: 'Bateria Samsung Galaxy S21', quantity: 3, cost: 180.00 },
-    { name: 'Capa Traseira iPhone 13', quantity: 8, cost: 120.00 }
-  ];
-
-  // Criar dados padrão
-  Promise.all([
-    ...defaultModels.map(model => DeviceModel.create(model)),
-    ...defaultServices.map(service => Service.create(service)),
-    ...defaultStock.map(item => StockItem.create(item))
-  ]).then(() => {
-    console.log('Default data created');
-  });
-});
-
-// Importar rotas
+// Import routes
 app.use('/api/orders', require('../../backend/routes/orders'));
 app.use('/api/stock', require('../../backend/routes/stock'));
 app.use('/api/models', require('../../backend/routes/models'));
@@ -92,10 +43,14 @@ app.use('/api/common-issues', require('../../backend/routes/commonIssues'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', database: 'SQLite' });
+  res.status(200).json({ 
+    status: 'ok', 
+    database: 'MongoDB',
+    connected: mongoose.connection.readyState === 1
+  });
 });
 
-// Rota raiz da API
+// API root endpoint
 app.get('/api', (req, res) => {
   res.json({
     message: 'Bem-vindo à API da OneTech',
@@ -117,22 +72,19 @@ app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ 
     error: 'Something went wrong!',
-    message: err.message
+    message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
-// Handler para Netlify Functions
-exports.handler = async (event, context) => {
-  return new Promise((resolve) => {
-    app(event, context, (err, result) => {
-      if (err) {
-        resolve({
-          statusCode: 500,
-          body: JSON.stringify({ error: err.message })
-        });
-      } else {
-        resolve(result);
-      }
-    });
-  });
+// Wrap the Express app with serverless-http
+const handler = serverless(app);
+
+// Netlify Functions handler
+module.exports.handler = async (event, context) => {
+  // Ensure database connection
+  await connectDB();
+  
+  // Process the request
+  const result = await handler(event, context);
+  return result;
 };
