@@ -1,33 +1,54 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
 const path = require('path');
-const fs = require('fs');
-
-// Import models and sequelize from index
-const { sequelize, ...models } = require('./models');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/one2';
 
-// Ensure database directory exists
-const dbDir = path.join(__dirname, 'database');
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-
-// Test the database connection
-const testConnection = async () => {
+// Connect to MongoDB
+const connectDB = async () => {
   try {
-    await sequelize.authenticate();
-    console.log('Connection to SQLite has been established successfully.');
-    
-    // Sync all models
-    await sequelize.sync({ force: true });
-    console.log('All models were synchronized successfully.');
-    
-    // Insert default data if tables are empty
-    await insertDefaultData();
+    await mongoose.connect(MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('MongoDB connected successfully');
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  }
+};
+
+connectDB();
+
+// Middleware
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true
+}));
+app.use(express.json());
+
+// Routes
+app.use('/api/models', require('./routes/models'));
+app.use('/api/stock', require('./routes/stock'));
+app.use('/api/services', require('./routes/services'));
+app.use('/api/orders', require('./routes/orders'));
+app.use('/api/custom-cases', require('./routes/customCases'));
+app.use('/api/common-issues', require('./routes/commonIssues'));
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ message: 'Something went wrong!', error: process.env.NODE_ENV === 'development' ? err.message : undefined });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
   } catch (error) {
     console.error('Unable to connect to the database:', error);
   }

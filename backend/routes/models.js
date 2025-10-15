@@ -1,44 +1,33 @@
 const express = require('express');
 const router = express.Router();
-const { DeviceModel, CommonIssue } = require('../models');
-const { Op } = require('sequelize');
+const DeviceModel = require('../models/DeviceModel');
+const CommonIssue = require('../models/CommonIssue');
 
 // Obter todos os modelos de dispositivos com filtros opcionais
 router.get('/', async (req, res) => {
   try {
     const { brand, search, active } = req.query;
-    const where = {};
+    const query = {};
     
     if (brand) {
-      where.brand = { [Op.iLike]: `%${brand}%` };
+      query.brand = new RegExp(brand, 'i');
     }
     
     if (search) {
-      where[Op.or] = [
-        { brand: { [Op.iLike]: `%${search}%` } },
-        { model: { [Op.iLike]: `%${search}%` } }
+      query.$or = [
+        { brand: new RegExp(search, 'i') },
+        { model: new RegExp(search, 'i') }
       ];
     }
     
     if (active !== undefined) {
-      where.is_active = active === 'true';
+      query.isActive = active === 'true';
     }
     
-    const models = await DeviceModel.findAll({
-      where,
-      order: [
-        ['brand', 'ASC'],
-        ['model', 'ASC']
-      ],
-      include: [
-        {
-          model: CommonIssue,
-          as: 'common_issues',
-          required: false
-        }
-      ]
-    });
-    
+    const models = await DeviceModel.find(query)
+      .sort({ brand: 1, model: 1 })
+      .populate('commonIssues');
+
     res.json(models);
   } catch (err) {
     console.error('Erro ao buscar modelos de dispositivos:', err);
@@ -54,31 +43,16 @@ router.get('/:id', getModel, (req, res) => {
 // Criar um novo modelo de dispositivo
 router.post('/', async (req, res) => {
   try {
-    const model = await DeviceModel.create({
+    const model = new DeviceModel({
       brand: req.body.brand,
       model: req.body.model,
-      release_year: req.body.releaseYear,
-      screen_size: req.body.screenSize,
-      is_active: req.body.isActive !== undefined ? req.body.isActive : true
+      releaseYear: req.body.releaseYear,
+      screenSize: req.body.screenSize,
+      isActive: req.body.isActive !== undefined ? req.body.isActive : true,
+      commonIssues: req.body.commonIssues || []
     });
     
-    // Se houver issues comuns, criamos elas também
-    if (req.body.commonIssues && Array.isArray(req.body.commonIssues)) {
-      const issues = req.body.commonIssues.map(issue => ({
-        ...issue,
-        device_model_id: model.id
-      }));
-      
-      await CommonIssue.bulkCreate(issues);
-      
-      // Recarregar o modelo com as issues
-      await model.reload({
-        include: [
-          { model: CommonIssue, as: 'common_issues' }
-        ]
-      });
-    }
-    
+    await model.save();
     res.status(201).json(model);
   } catch (err) {
     console.error('Erro ao criar modelo de dispositivo:', err);
@@ -95,34 +69,14 @@ router.put('/:id', getModel, async (req, res) => {
   
   if (req.body.brand !== undefined) updates.brand = req.body.brand;
   if (req.body.model !== undefined) updates.model = req.body.model;
-  if (req.body.releaseYear !== undefined) updates.release_year = req.body.releaseYear;
-  if (req.body.screenSize !== undefined) updates.screen_size = req.body.screenSize;
-  if (req.body.isActive !== undefined) updates.is_active = req.body.isActive;
+  if (req.body.releaseYear !== undefined) updates.releaseYear = req.body.releaseYear;
+  if (req.body.screenSize !== undefined) updates.screenSize = req.body.screenSize;
+  if (req.body.isActive !== undefined) updates.isActive = req.body.isActive;
+  if (req.body.commonIssues !== undefined) updates.commonIssues = req.body.commonIssues;
 
   try {
-    await res.deviceModel.update(updates);
-    
-    // Atualizar issues comuns, se fornecidas
-    if (req.body.commonIssues && Array.isArray(req.body.commonIssues)) {
-      // Remover issues existentes
-      await CommonIssue.destroy({ where: { device_model_id: res.deviceModel.id } });
-      
-      // Adicionar novas issues
-      const issues = req.body.commonIssues.map(issue => ({
-        ...issue,
-        device_model_id: res.deviceModel.id
-      }));
-      
-      await CommonIssue.bulkCreate(issues);
-    }
-    
-    // Recarregar o modelo com as atualizações
-    const updatedModel = await DeviceModel.findByPk(res.deviceModel.id, {
-      include: [
-        { model: CommonIssue, as: 'common_issues' }
-      ]
-    });
-    
+    Object.assign(res.deviceModel, updates);
+    const updatedModel = await res.deviceModel.save();
     res.json(updatedModel);
   } catch (err) {
     console.error('Erro ao atualizar modelo de dispositivo:', err);
@@ -133,7 +87,7 @@ router.put('/:id', getModel, async (req, res) => {
 // Desativar um modelo de dispositivo (exclusão lógica)
 router.delete('/:id', getModel, async (req, res) => {
   try {
-    await res.deviceModel.update({ is_active: false });
+    await res.deviceModel.update({ isActive: false });
     res.json({ message: 'Modelo de dispositivo desativado com sucesso' });
   } catch (err) {
     console.error('Erro ao desativar modelo de dispositivo:', err);
