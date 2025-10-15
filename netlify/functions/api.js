@@ -1,7 +1,8 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const serverless = require('serverless-http');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -14,24 +15,23 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Import database models
+const { sequelize } = require('../../backend/models');
+
 // Database connection
 const connectDB = async () => {
-  if (mongoose.connection.readyState >= 1) return;
-  
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/one2', {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    console.log('MongoDB connected successfully');
-  } catch (err) {
-    console.error('MongoDB connection error:', err);
+    await sequelize.authenticate();
+    console.log('SQLite connection has been established successfully.');
+    
+    // Sync all models
+    await sequelize.sync({ force: false });
+    console.log('All models were synchronized successfully.');
+  } catch (error) {
+    console.error('Unable to connect to the database:', error);
     process.exit(1);
   }
 };
-
-// Connect to MongoDB
-connectDB();
 
 // Import routes
 app.use('/api/orders', require('../../backend/routes/orders'));
@@ -45,8 +45,8 @@ app.use('/api/common-issues', require('../../backend/routes/commonIssues'));
 app.get('/api/health', (req, res) => {
   res.status(200).json({ 
     status: 'ok', 
-    database: 'MongoDB',
-    connected: mongoose.connection.readyState === 1
+    database: 'SQLite',
+    connected: true
   });
 });
 
