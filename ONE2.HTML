@@ -32,6 +32,8 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js para Gráficos -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- API Service (cache-busted) -->
+    <script type="module" src="js/apiService.js?v=1.0.3"></script>
     <style>
         /* --- Variáveis CSS para Cores Centrais e Fluidez --- */
         :root {
@@ -174,6 +176,18 @@
         <!-- Notificações aparecerão aqui -->
     </div>
 
+    <!-- Global Confirmation Modal (available in all views) -->
+    <div id="custom-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+            <h3 id="modal-title" class="text-xl font-bold mb-4 text-text-dark"></h3>
+            <p id="modal-body" class="mb-6 text-gray-700"></p>
+            <div class="flex justify-end space-x-3">
+                <button id="modal-cancel-btn" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">Cancelar</button>
+                <button id="modal-confirm-btn" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Sidebar (Ilha/Dock em Desktop, Slide-in em Mobile) -->
     <aside id="sidebar" class="flex flex-col p-4">
         
@@ -246,35 +260,36 @@
     // Variáveis Globais do Canvas
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     
-    // Simulação de Dados (localStorage/sessionStorage)
-    const LS_KEY = 'onetech_pro_data';
-    const SS_KEY = 'onetech_pro_custom_case';
+    // Chave para armazenamento de capinha personalizada no sessionStorage
+    const SS_KEY = 'onetech_custom_case';
+    
+    // Cache de dados para melhor performance
+    let dataCache = null;
+    let cacheTimestamp = 0;
+    const CACHE_DURATION = 30000; // 30 segundos
 
-    /**
-     * Inicializa os dados no localStorage com valores padrão se não existirem.
-     */
-    function initializeData() {
-        const defaultData = {
-            orders: [],
-            stock: [],
-            models: [
-                { brand: 'Apple', name: 'iPhone 15 Pro Max' },
-                { brand: 'Samsung', name: 'Galaxy S23 Ultra' },
-                { brand: 'Xiaomi', name: 'Redmi Note 12' },
-            ],
-            services: [
-                { name: 'Troca de Tela', price: 350.00 },
-                { name: 'Troca de Bateria', price: 120.00 },
-                { name: 'Desoxidação', price: 80.00 },
-            ],
-            appData: {
-                lastOrderId: 1000,
-                revenueLog: generateMockRevenueLog(),
-            }
-        };
+    // Importa as APIs do módulo
+    let DeviceModels, CommonIssues, Stock, Services, Orders;
+    let apisLoaded = false;
 
-        if (!localStorage.getItem(LS_KEY)) {
-            localStorage.setItem(LS_KEY, JSON.stringify(defaultData));
+    // Inicializa as APIs quando o módulo carregar
+    import('./js/apiService.js?v=1.0.3').then(module => {
+        DeviceModels = module.DeviceModels;
+        CommonIssues = module.CommonIssues;
+        Stock = module.Stock;
+        Services = module.Services;
+        Orders = module.Orders;
+        apisLoaded = true;
+        console.log('APIs carregadas com sucesso');
+    }).catch(error => {
+        console.error('Erro ao carregar APIs:', error);
+        apisLoaded = false;
+    });
+
+    // Função para aguardar o carregamento das APIs
+    async function waitForAPIs() {
+        while (!apisLoaded) {
+            await new Promise(resolve => setTimeout(resolve, 100));
         }
     }
 
@@ -294,22 +309,102 @@
     }
 
     /**
-     * Retorna todos os dados da aplicação do localStorage.
-     * @returns {object} Dados da aplicação.
+     * Inicializa os dados padrão no banco de dados se necessário.
      */
-    function getData() {
-        const data = localStorage.getItem(LS_KEY);
-        return data ? JSON.parse(data) : initializeData();
+    async function initializeData() {
+        try {
+            // Aguarda o carregamento das APIs
+            await waitForAPIs();
+            
+            // Simplesmente retorna os dados existentes
+            // Os dados padrão já foram criados no backend
+            return await getData();
+        } catch (error) {
+            console.error('Erro ao inicializar dados:', error);
+            showToast('Erro ao carregar dados iniciais', 'danger');
+            return { orders: [], stock: [], models: [], services: [], appData: { lastOrderId: 1000, revenueLog: generateMockRevenueLog() } };
+        }
     }
 
     /**
-     * Salva todos os dados no localStorage.
-     * @param {object} data - Dados a serem salvos.
+     * Retorna todos os dados da aplicação do banco de dados.
+     * @returns {object} Dados da aplicação.
      */
-    function saveData(data) {
-        localStorage.setItem(LS_KEY, JSON.stringify(data));
-        // Simula atualização, re-renderizando a view atual.
-        renderView(activeView);
+    async function getData() {
+        try {
+            // Verifica cache
+            const now = Date.now();
+            if (dataCache && (now - cacheTimestamp) < CACHE_DURATION) {
+                return dataCache;
+            }
+
+            // Aguarda o carregamento das APIs
+            await waitForAPIs();
+
+            // Busca dados da API
+            const [orders, stock, models, services] = await Promise.all([
+                Orders.getAll().catch((err) => {
+                    console.error('Erro ao buscar pedidos:', err);
+                    return [];
+                }),
+                Stock.getAll().catch((err) => {
+                    console.error('Erro ao buscar estoque:', err);
+                    return [];
+                }),
+                DeviceModels.getAll().catch((err) => {
+                    console.error('Erro ao buscar modelos:', err);
+                    return [];
+                }),
+                Services.getAll().catch((err) => {
+                    console.error('Erro ao buscar serviços:', err);
+                    return [];
+                })
+            ]);
+
+            // Normaliza serviços para sempre possuir campo price numérico
+            const normalizedServices = Array.isArray(services)
+                ? services.map(s => ({
+                    ...s,
+                    price: Number((s && (s.price ?? s.base_price ?? s.basePrice)) ?? 0)
+                }))
+                : [];
+
+            const data = {
+                orders: Array.isArray(orders) ? orders : [],
+                stock: Array.isArray(stock) ? stock : [],
+                models: Array.isArray(models) ? models : [],
+                services: normalizedServices,
+                appData: { 
+                    lastOrderId: Array.isArray(orders) && orders.length > 0 ? Math.max(...orders.map(o => o.id || 0), 1000) : 1000,
+                    revenueLog: generateMockRevenueLog()
+                }
+            };
+
+            // Atualiza cache
+            dataCache = data;
+            cacheTimestamp = now;
+
+            return data;
+        } catch (error) {
+            console.error('Erro ao buscar dados:', error);
+            showToast('Erro ao carregar dados', 'danger');
+            return { orders: [], stock: [], models: [], services: [], appData: { lastOrderId: 1000, revenueLog: generateMockRevenueLog() } };
+        }
+    }
+
+    /**
+     * Invalida o cache de dados.
+     */
+    function invalidateCache() {
+        dataCache = null;
+        cacheTimestamp = 0;
+    }
+
+    /**
+     * Wrapper assíncrono para renderView.
+     */
+    async function renderViewAsync(viewName) {
+        await renderView(viewName);
     }
 
     /**
@@ -455,12 +550,20 @@
             }
         });
 
-        setTimeout(() => {
+        setTimeout(async () => {
+            try {
+                // Aguarda as APIs se necessário
+                await waitForAPIs();
+                
             activeView = viewName;
-            renderView(viewName);
+                await renderView(viewName);
             // Retorna o efeito de slide/fade
             contentWrapper.style.transform = 'translateY(0)';
             contentWrapper.style.opacity = '1';
+            } catch (error) {
+                console.error('Erro ao navegar:', error);
+                showToast('Erro ao carregar página', 'danger');
+            }
         }, 300); // Tempo da transição CSS
     }
 
@@ -468,9 +571,10 @@
      * Renderiza o conteúdo da view principal.
      * @param {string} viewName - Nome da view a ser renderizada.
      */
-    function renderView(viewName) {
+    async function renderView(viewName) {
+        try {
         let htmlContent = '';
-        const data = getData();
+            const data = await getData();
         const models = data.models;
         const services = data.services;
         const orders = data.orders;
@@ -510,11 +614,23 @@
         } else if (viewName === 'manage-orders') {
             initializeManageOrdersLogic(orders);
         } else if (viewName === 'stock') {
-            initializeStockLogic();
+            await initializeStockLogic();
         } else if (viewName === 'custom-cases') {
             initializeCustomCasesLogic();
         } else if (viewName === 'admin') {
             initializeAdminLogic();
+        }
+        } catch (error) {
+            console.error('Erro ao renderizar view:', error);
+            contentWrapper.innerHTML = `
+                <div class="p-8 text-center">
+                    <div class="text-red-500 text-xl mb-4">❌ Erro ao carregar página</div>
+                    <div class="text-gray-600 mb-4">${error.message}</div>
+                    <button onclick="location.reload()" class="btn-primary px-4 py-2 rounded-lg">
+                        Recarregar Página
+                    </button>
+                </div>
+            `;
         }
     }
 
@@ -525,14 +641,14 @@
      */
     function renderDashboard(orders, stock, models, revenueLog) {
         const ordersMonth = orders.filter(o => {
-            const date = new Date(o.date);
-            return date.getMonth() === new Date().getMonth() && o.status === 'Concluído';
+            const date = new Date(o.date || o.created_at || o.createdAt || Date.now());
+            return date.getMonth() === new Date().getMonth() && o.status === 'completed';
         }).length;
         
         const revenueMonth = orders.filter(o => {
-            const date = new Date(o.date);
-            return date.getMonth() === new Date().getMonth() && o.status === 'Concluído';
-        }).reduce((sum, o) => sum + o.total, 0).toFixed(2);
+            const date = new Date(o.date || o.created_at || o.createdAt || Date.now());
+            return date.getMonth() === new Date().getMonth() && o.status === 'completed';
+        }).reduce((sum, o) => sum + Number((o.total ?? o.estimated_price ?? 0)), 0).toFixed(2);
 
         const stockCount = stock.reduce((sum, item) => sum + item.quantity, 0);
         const modelsCount = models.length;
@@ -620,9 +736,12 @@
     function renderNewOrderForm(models, services) {
         const customCase = getCustomCase();
         
-        const modelOptions = models.map(m => 
-            `<option value="${m.brand} - ${m.name}">${m.brand} - ${m.name}</option>`
-        ).join('');
+        const modelOptions = models.map(m => {
+            const brand = m.brand || '';
+            const name = m.name || m.model || '';
+            const label = `${brand} - ${name}`.trim().replace(/\s+-\s+$/, '').replace(/^\s+-\s+/, '');
+            return `<option value="${label}">${label}</option>`;
+        }).join('');
         
         const serviceCheckboxes = services.map((s, index) => `
             <div class="flex items-center justify-between p-3 bg-bg-light rounded-lg">
@@ -630,7 +749,7 @@
                     <input type="checkbox" id="service-${index}" data-price="${s.price}" data-name="${s.name}" class="service-checkbox w-4 h-4 text-primary-blue bg-gray-100 border-gray-300 rounded focus:ring-primary-blue">
                     <span class="ml-2">${s.name}</span>
                 </label>
-                <span class="text-sm font-semibold text-primary-blue">R$ ${s.price.toFixed(2).replace('.', ',')}</span>
+                                <span class="text-sm font-semibold text-primary-blue">R$ ${(Number(s.price || 0)).toFixed(2).replace('.', ',')}</span>
             </div>
         `).join('');
 
@@ -771,10 +890,10 @@
         updateSummary();
 
         // Lógica de Submissão do Formulário
-        form.addEventListener('submit', function(e) {
+        form.addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const data = getData();
+            const data = await getData();
             const nextId = data.appData.lastOrderId + 1;
             
             const selectedItems = [];
@@ -797,26 +916,37 @@
                 return;
             }
 
+            const customerName = document.getElementById('client-name').value;
+            const phone = document.getElementById('client-phone').value;
+            const deviceModel = document.getElementById('device-model').value;
+            const issue = document.getElementById('observations').value;
+            const estimatedPrice = parseFloat(totalDisplay.textContent.replace('R$', '').replace('.', '').replace(',', '.')) || 0;
+            const serviceType = selectedItems.map(s => s.name).join(', ');
+
             const newOrder = {
-                id: nextId,
-                clientName: document.getElementById('client-name').value,
-                clientPhone: document.getElementById('client-phone').value,
-                deviceModel: document.getElementById('device-model').value,
-                observations: document.getElementById('observations').value,
-                services: selectedItems,
-                total: parseFloat(totalDisplay.textContent.replace('R$', '').replace(',', '.')),
-                status: 'Aguardando Avaliação',
-                date: new Date().toISOString(),
+                customerName,
+                phone,
+                deviceModel,
+                issue,
+                serviceType,
+                estimatedPrice,
+                status: 'pending',
+                notes: '',
             };
 
-            data.orders.unshift(newOrder); 
-            data.appData.lastOrderId = nextId;
-            saveData(data); 
+            try {
+                // Salva o pedido na API
+                await Orders.create(newOrder);
+                invalidateCache(); // Invalida o cache para buscar dados atualizados
 
             setCustomCase(null); 
             
-            showToast(`Pedido #${nextId} registrado com sucesso!`, 'success');
+            showToast(`Pedido registrado com sucesso!`, 'success');
             navigateTo('manage-orders'); 
+            } catch (error) {
+                console.error('Erro ao salvar pedido:', error);
+                showToast('Erro ao salvar pedido. Tente novamente.', 'danger');
+            } 
         });
     }
 
@@ -836,7 +966,7 @@
             
             <div class="mb-6 flex flex-col md:flex-row gap-4 items-center">
                 <input type="text" id="order-search" placeholder="Buscar por ID, Cliente ou Modelo..." class="input-field w-full md:w-auto md:flex-1 md:max-w-md">
-                <button onclick="renderView('manage-orders')" class="btn-primary p-3 md:p-2 rounded-xl text-white font-semibold flex items-center justify-center md:justify-start w-full md:w-auto">
+                <button onclick="renderViewAsync('manage-orders')" class="btn-primary p-3 md:p-2 rounded-xl text-white font-semibold flex items-center justify-center md:justify-start w-full md:w-auto">
                     <i data-lucide="rotate-ccw" class="w-4 h-4 mr-1"></i> Recarregar
                 </button>
             </div>
@@ -866,35 +996,45 @@
     }
 
     function renderOrderRow(order) {
-        const statusMap = {
-            'Aguardando Avaliação': 'yellow',
-            'Em Reparo': 'primary-blue',
-            'Concluído': 'green',
-            'Cancelado': 'red',
+        const statusColorMap = {
+            pending: 'yellow',
+            in_progress: 'primary-blue',
+            completed: 'green',
+            delivered: 'green'
         };
-        const statusColor = statusMap[order.status] || 'gray';
-        const date = new Date(order.date).toLocaleDateString('pt-BR');
+        const statusLabelMap = {
+            pending: 'Aguardando',
+            in_progress: 'Em Reparo',
+            completed: 'Concluído',
+            delivered: 'Entregue'
+        };
+        const statusColor = statusColorMap[order.status] || 'gray';
+        const dateRaw = order.date || order.created_at || order.createdAt || order.updated_at || order.updatedAt;
+        const dateObj = dateRaw ? new Date(dateRaw) : null;
+        const date = (dateObj && !isNaN(dateObj)) ? dateObj.toLocaleDateString('pt-BR') : '—';
 
         return `
-            <tr data-order-id="${order.id}" data-search-terms="${order.id} ${order.clientName} ${order.deviceModel}">
+            <tr data-order-id="${order.id}" data-search-terms="${order.id} ${(order.clientName || order.customer_name || '').toString()} ${(order.deviceModel || order.device_model || '').toString()}">
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-bold text-text-dark">#${order.id}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${order.clientName} <span class="text-xs text-gray-400 block">${date}</span></td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${order.deviceModel}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${order.clientName || order.customer_name || '—'} <span class="text-xs text-gray-400 block">${date}</span></td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${order.deviceModel || order.device_model || '—'}</td>
                 <td class="px-6 py-4 text-sm text-gray-700">
                     <ul class="list-disc pl-4 text-xs">
-                        ${order.services.map(s => `<li>${s.name}</li>`).join('')}
+                        ${Array.isArray(order.services)
+                            ? order.services.map(s => `<li>${s.name || s}</li>`).join('')
+                            : (order.service_type ? order.service_type.split(',').map(n => `<li>${n.trim()}</li>`).join('') : '<li>N/A</li>')}
                     </ul>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-primary-blue">R$ ${order.total.toFixed(2).replace('.', ',')}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-primary-blue">R$ ${(Number(order.total ?? order.estimated_price ?? 0)).toFixed(2).replace('.', ',')}</td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     <select onchange="updateOrderStatus(${order.id}, this.value)" class="p-2 rounded-lg text-xs font-semibold bg-${statusColor}-100 border border-${statusColor}-300 text-${statusColor}-700 focus:outline-none">
-                        ${['Aguardando Avaliação', 'Em Reparo', 'Concluído', 'Cancelado'].map(s => 
-                            `<option value="${s}" ${order.status === s ? 'selected' : ''}>${s}</option>`
+                        ${['pending', 'in_progress', 'completed', 'delivered'].map(s => 
+                            `<option value="${s}" ${order.status === s ? 'selected' : ''}>${statusLabelMap[s]}</option>`
                         ).join('')}
                     </select>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <button onclick="deleteOrder(${order.id})" class="text-red-600 hover:text-red-900 ml-3" title="Excluir Pedido">
+                    <button type="button" onclick="deleteOrder(${order.id})" class="text-red-600 hover:text-red-900 ml-3" title="Excluir Pedido">
                         <i data-lucide="trash-2" class="w-4 h-4"></i>
                     </button>
                 </td>
@@ -909,7 +1049,7 @@
         searchInput.addEventListener('input', function() {
             const searchTerm = searchInput.value.toLowerCase();
             const filteredOrders = allOrders.filter(order => 
-                `${order.id} ${order.clientName} ${order.deviceModel}`.toLowerCase().includes(searchTerm)
+                `${order.id} ${(order.clientName || order.customer_name || '')} ${(order.deviceModel || order.device_model || '')}`.toLowerCase().includes(searchTerm)
             );
             
             tableBody.innerHTML = filteredOrders.length > 0 ? filteredOrders.map(renderOrderRow).join('') : `
@@ -919,24 +1059,48 @@
         });
     }
 
-    window.updateOrderStatus = function(orderId, newStatus) {
-        const data = getData();
-        const order = data.orders.find(o => o.id === orderId);
-        if (order) {
-            order.status = newStatus;
-            saveData(data);
+    window.updateOrderStatus = async function(orderId, newStatusRaw) {
+        const mapPtToEnum = {
+            'Aguardando': 'pending',
+            'Aguardando Avaliação': 'pending',
+            'Em Reparo': 'in_progress',
+            'Concluído': 'completed',
+            'Entregue': 'delivered',
+        };
+        const newStatus = mapPtToEnum[newStatusRaw] || newStatusRaw;
+        try {
+            await Orders.updateStatus(orderId, newStatus);
+            invalidateCache();
             showToast(`Status do Pedido #${orderId} alterado para "${newStatus}"!`, 'info');
+            await renderViewAsync('manage-orders');
+        } catch (error) {
+            console.error('Erro ao atualizar status:', error);
+            const msg = (error && error.message) ? error.message : 'Erro ao atualizar status do pedido.';
+            showToast(msg, 'danger');
         }
     }
 
     window.deleteOrder = function(orderId) {
-        // Usa a custom modal box em vez de confirm()
-        showModal('Confirmação de Exclusão', `Tem certeza que deseja excluir o Pedido #${orderId}? Esta ação é irreversível.`, () => {
-            const data = getData();
-            data.orders = data.orders.filter(o => o.id !== orderId);
-            saveData(data);
-            showToast(`Pedido #${orderId} excluído com sucesso.`, 'danger');
-        });
+        const modalEl = document.getElementById('custom-modal');
+        const proceedDelete = async () => {
+            try {
+                await Orders.delete(orderId);
+                invalidateCache();
+                showToast(`Pedido #${orderId} excluído com sucesso.`, 'danger');
+                await renderViewAsync('manage-orders');
+            } catch (error) {
+                console.error('Erro ao excluir pedido:', error);
+                const msg = (error && error.message) ? error.message : 'Erro ao excluir pedido.';
+                showToast(msg, 'danger');
+            }
+        };
+        if (modalEl && typeof showModal === 'function') {
+            showModal('Confirmação de Exclusão', `Tem certeza que deseja excluir o Pedido #${orderId}? Esta ação é irreversível.`, proceedDelete);
+        } else {
+            if (window.confirm(`Tem certeza que deseja excluir o Pedido #${orderId}?`)) {
+                proceedDelete();
+            }
+        }
     }
 
     /**
@@ -1013,7 +1177,7 @@
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-center ${lowStockClass}">
                     ${item.quantity}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">R$ ${item.cost.toFixed(2).replace('.', ',')}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">R$ ${(Number(item.price || item.cost || 0)).toFixed(2).replace('.', ',')}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button onclick="deleteStockItem(${index})" class="text-red-600 hover:text-red-900" title="Remover Item">
                         <i data-lucide="trash-2" class="w-4 h-4"></i>
@@ -1023,25 +1187,31 @@
         `;
     }
 
-    function initializeStockLogic() {
+    async function initializeStockLogic() {
         const form = document.getElementById('add-stock-form');
         const searchInput = document.getElementById('stock-search');
         const tableBody = document.getElementById('stock-table-body');
-        const allStock = getData().stock;
+        const allStock = (await getData()).stock;
 
-        form.addEventListener('submit', function(e) {
+        form.addEventListener('submit', async function(e) {
             e.preventDefault();
-            const data = getData();
             const newItem = {
                 name: document.getElementById('item-name').value,
                 quantity: parseInt(document.getElementById('item-quantity').value),
-                cost: parseFloat(document.getElementById('item-cost').value),
-                compatibleModel: document.getElementById('item-compatible-model').value || null,
+                price: parseFloat(document.getElementById('item-cost').value),
+                description: document.getElementById('item-compatible-model').value || null,
             };
-            data.stock.push(newItem);
-            saveData(data);
+            
+            try {
+                await Stock.create(newItem);
+                invalidateCache();
             showToast(`Item "${newItem.name}" adicionado ao estoque.`, 'success');
             form.reset();
+                await renderViewAsync('stock-control');
+            } catch (error) {
+                console.error('Erro ao adicionar item:', error);
+                showToast('Erro ao adicionar item ao estoque.', 'danger');
+            }
         });
 
         searchInput.addEventListener('input', function() {
@@ -1058,12 +1228,18 @@
     }
 
     window.deleteStockItem = function(index) {
-        showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este item do estoque?`, () => {
-            const data = getData();
-            const itemName = data.stock[index].name;
-            data.stock.splice(index, 1);
-            saveData(data);
-            showToast(`Item "${itemName}" removido do estoque.`, 'danger');
+        showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este item do estoque?`, async () => {
+            try {
+                const data = await getData();
+                const item = data.stock[index];
+                await Stock.delete(item.id);
+                invalidateCache();
+                showToast(`Item "${item.name}" removido do estoque.`, 'danger');
+                await renderViewAsync('stock-control');
+            } catch (error) {
+                console.error('Erro ao excluir item:', error);
+                showToast('Erro ao excluir item do estoque.', 'danger');
+            }
         });
     }
     
@@ -1340,45 +1516,61 @@
 
     function initializeAdminLogic() {
         // Lógica de Adicionar Modelo
-        document.getElementById('add-model-form').addEventListener('submit', function(e) {
+        document.getElementById('add-model-form').addEventListener('submit', async function(e) {
             e.preventDefault();
             const newBrand = document.getElementById('new-brand').value.trim();
             const newModelName = document.getElementById('new-model-name').value.trim();
             if (newBrand && newModelName) {
-                const data = getData();
-                data.models.push({ brand: newBrand, name: newModelName });
-                saveData(data);
+                try {
+                    await DeviceModels.create({ brand: newBrand, model: newModelName });
+                    invalidateCache();
                 showToast(`Modelo ${newBrand} - ${newModelName} adicionado!`, 'success');
                 e.target.reset();
+                    await renderViewAsync('admin');
+                } catch (error) {
+                    console.error('Erro ao adicionar modelo:', error);
+                    showToast('Erro ao adicionar modelo.', 'danger');
+                }
             }
         });
 
         // Lógica de Adicionar Serviço
-        document.getElementById('add-service-form').addEventListener('submit', function(e) {
+        document.getElementById('add-service-form').addEventListener('submit', async function(e) {
             e.preventDefault();
             const newServiceName = document.getElementById('new-service-name').value.trim();
             const newServicePrice = parseFloat(document.getElementById('new-service-price').value);
             if (newServiceName && !isNaN(newServicePrice) && newServicePrice > 0) {
-                const data = getData();
-                data.services.push({ name: newServiceName, price: newServicePrice });
-                saveData(data);
+                try {
+            await Services.create({ name: newServiceName, basePrice: newServicePrice });
+                    invalidateCache();
                 showToast(`Serviço "${newServiceName}" adicionado.`, 'success');
                 e.target.reset();
+                    await renderViewAsync('admin');
+                } catch (error) {
+                    console.error('Erro ao adicionar serviço:', error);
+                    showToast('Erro ao adicionar serviço.', 'danger');
+                }
             }
         });
     }
 
     window.deleteModel = function(index) {
-        showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este modelo?`, () => {
-            const data = getData();
-            const modelName = data.models[index].name;
-            data.models.splice(index, 1);
-            saveData(data);
-            showToast(`Modelo "${modelName}" removido.`, 'danger');
+        showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este modelo?`, async () => {
+            try {
+                const data = await getData();
+                const model = data.models[index];
+                await DeviceModels.delete(model.id);
+                invalidateCache();
+                showToast(`Modelo "${model.name}" removido.`, 'danger');
+                await renderViewAsync('admin');
+            } catch (error) {
+                console.error('Erro ao excluir modelo:', error);
+                showToast('Erro ao excluir modelo.', 'danger');
+            }
         });
     }
 
-    window.saveServicePrice = function(index) {
+    window.saveServicePrice = async function(index) {
         const inputElement = document.querySelector(`.service-price-input[data-index="${index}"]`);
         const newPrice = parseFloat(inputElement.value);
 
@@ -1387,53 +1579,74 @@
             return;
         }
 
-        const data = getData();
+        try {
+            const data = await getData();
         const service = data.services[index];
-        service.price = newPrice;
-        saveData(data);
+            // Backend espera basePrice; mantém compatibilidade com objeto existente
+            await Services.update(service.id, { ...service, basePrice: newPrice });
+            invalidateCache();
         showToast(`Preço de "${service.name}" atualizado para R$ ${newPrice.toFixed(2).replace('.', ',')}!`, 'success');
+            await renderViewAsync('admin');
+        } catch (error) {
+            console.error('Erro ao atualizar preço:', error);
+            showToast('Erro ao atualizar preço do serviço.', 'danger');
+        }
     }
 
     window.deleteService = function(index) {
-        showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este serviço?`, () => {
-            const data = getData();
-            const serviceName = data.services[index].name;
-            data.services.splice(index, 1);
-            saveData(data);
-            showToast(`Serviço "${serviceName}" removido.`, 'danger');
+        showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este serviço?`, async () => {
+            try {
+                const data = await getData();
+                const service = data.services[index];
+                await Services.delete(service.id);
+                invalidateCache();
+                showToast(`Serviço "${service.name}" removido.`, 'danger');
+                await renderViewAsync('admin');
+            } catch (error) {
+                console.error('Erro ao excluir serviço:', error);
+                showToast('Erro ao excluir serviço.', 'danger');
+            }
         });
     }
 
-    // --- Lógica da Modal Customizada (Substitui confirm()) ---
+    // --- Lógica da Modal Customizada Global ---
     let modalCallback = null;
-    const modal = document.getElementById('custom-modal');
+    let modal = null;
+    function ensureModalBound() {
+        if (!modal) {
+            modal = document.getElementById('custom-modal');
+            const cancelBtn = document.getElementById('modal-cancel-btn');
+            const confirmBtn = document.getElementById('modal-confirm-btn');
+            cancelBtn?.addEventListener('click', hideModal);
+            confirmBtn?.addEventListener('click', () => {
+                if (modalCallback) modalCallback();
+                hideModal();
+            });
+        }
+    }
     
     function showModal(title, body, confirmAction) {
+        ensureModalBound();
         document.getElementById('modal-title').textContent = title;
         document.getElementById('modal-body').textContent = body;
         modalCallback = confirmAction;
         modal.classList.remove('hidden');
     }
-
+    
     function hideModal() {
+        if (!modal) return;
         modal.classList.add('hidden');
         modalCallback = null;
     }
 
-    // Inicializa a modal
-    document.addEventListener('DOMContentLoaded', () => {
-        document.getElementById('modal-cancel-btn')?.addEventListener('click', hideModal);
-        document.getElementById('modal-confirm-btn')?.addEventListener('click', () => {
-            if (modalCallback) {
-                modalCallback();
-            }
-            hideModal();
-        });
-    });
-
     // --- Inicialização da Aplicação ---
-    document.addEventListener('DOMContentLoaded', () => {
-        initializeData();
+    document.addEventListener('DOMContentLoaded', async () => {
+        try {
+            // Aguarda o carregamento das APIs
+            await waitForAPIs();
+            
+            // Inicializa os dados
+            await initializeData();
 
         // Configura a navegação
         document.querySelectorAll('.nav-link').forEach(link => {
@@ -1460,7 +1673,14 @@
             initialLink.style.boxShadow = '0 0 15px rgba(59, 130, 246, 0.8), inset 0 0 5px rgba(255, 255, 255, 0.6)'; 
         }
 
-        renderView(activeView);
+            // Renderiza a view inicial
+            await renderViewAsync(activeView);
+            
+            console.log('Aplicação inicializada com sucesso');
+        } catch (error) {
+            console.error('Erro na inicialização:', error);
+            showToast('Erro ao inicializar aplicação', 'danger');
+        }
     });
 
     // Garante que o estado da sidebar seja reajustado ao mudar o tamanho da tela

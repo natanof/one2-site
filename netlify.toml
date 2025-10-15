@@ -1,6 +1,14 @@
 [build]
   publish = "."
-  command = "echo 'No build required for static HTML'"
+  command = "cd backend && npm install"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
 
 [[redirects]]
   from = "/*"
