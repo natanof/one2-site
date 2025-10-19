@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ONETECH - Sistema de Ponto de Venda e Serviços Pro</title>
+    <link rel="icon" type="image/x-icon" href="image/onetech.ico">
     <!-- Carregamento do Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Supabase Client Library -->
@@ -1519,7 +1520,31 @@
     function initializeManageOrdersLogic(allOrders) {
         // Aguarda o próximo ciclo do event loop para garantir que o DOM foi atualizado
         setTimeout(() => {
-            // Adicione aqui a lógica de inicialização dos listeners e atualizações de UI
+            const searchInput = document.getElementById('order-search');
+            if (searchInput) {
+                searchInput.addEventListener('input', (e) => {
+                    const searchTerm = e.target.value.toLowerCase();
+                    const rows = document.querySelectorAll('#orders-table-body tr');
+                    
+                    rows.forEach(row => {
+                        const text = row.textContent.toLowerCase();
+                        row.style.display = text.includes(searchTerm) ? '' : 'none';
+                    });
+                });
+            }
+
+            // Adiciona evento de clique para a limpeza do campo de busca
+            const clearSearchBtn = document.getElementById('clear-search');
+            if (clearSearchBtn) {
+                clearSearchBtn.addEventListener('click', () => {
+                    const searchInput = document.getElementById('order-search');
+                    if (searchInput) {
+                        searchInput.value = '';
+                        const event = new Event('input', { bubbles: true });
+                        searchInput.dispatchEvent(event);
+                    }
+                });
+            }
         }, 0);
     }
 
@@ -1712,6 +1737,41 @@
         }
 
         let isLoadingStock = false;
+        let currentStockItems = [];
+
+        // Função para filtrar itens do estoque
+        function filterStockItems(searchTerm) {
+            if (!searchTerm) {
+                // Se não houver termo de busca, mostra todos os itens
+                const rows = tableBody.querySelectorAll('tr');
+                rows.forEach(row => row.style.display = '');
+                return;
+            }
+
+            const searchLower = searchTerm.toLowerCase();
+            const rows = tableBody.querySelectorAll('tr');
+            
+            rows.forEach(row => {
+                // Pula a linha de mensagem de estoque vazio
+                if (row.querySelector('td[colspan]')) {
+                    return;
+                }
+                
+                const name = row.cells[0].textContent.toLowerCase();
+                const model = row.cells[1].textContent.toLowerCase();
+                
+                if (name.includes(searchLower) || model.includes(searchLower)) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+        // Adiciona o evento de busca
+        searchInput.addEventListener('input', (e) => {
+            filterStockItems(e.target.value.trim());
+        });
 
         // Atualiza a lista de estoque diretamente do Supabase
         async function updateStockList() {
@@ -1733,20 +1793,23 @@
                     throw new Error('Conexão com Supabase não inicializada');
                 }
 
-                const { data: stock, error } = await supabase
+                const { data, error } = await supabase
                     .from('stock')
                     .select('*')
                     .order('name', { ascending: true });
+                
+                // Salva os itens atuais para uso na filtragem
+                currentStockItems = data || [];
 
                 if (error) {
                     throw new Error(`Erro do Supabase: ${error.message}`);
                 }
                 
-                if (!stock) {
-                    throw new Error('Dados do estoque não encontrados');
+                if (error) {
+                    throw error;
                 }
 
-                return stock;
+                return data || [];
             } catch (error) {
                 console.error('Erro ao carregar estoque:', error);
                 showToast(`Erro ao carregar estoque: ${error.message}`, 'danger');
@@ -1769,8 +1832,9 @@
         // Carrega o estoque inicial
         updateStockList().then(updateTableContent);
 
-        // Torna updateStockList global
+        // Torna as funções globais
         window.updateStockList = updateStockList;
+        window.filterStockItems = filterStockItems;
 
         let isSubmitting = false;
         form.addEventListener('submit', async function(e) {
@@ -1820,16 +1884,46 @@
             }
         });
 
-        searchInput.addEventListener('input', function() {
-            const searchTerm = searchInput.value.toLowerCase();
-            const filteredStock = allStock.filter(item => 
-                `${item.name} ${item.compatibleModel || ''}`.toLowerCase().includes(searchTerm)
-            );
+        // Função para filtrar itens do estoque
+        function filterStockItems(searchTerm) {
+            if (!searchTerm) {
+                // Se não houver termo de busca, mostra todos os itens
+                const rows = tableBody.querySelectorAll('tr');
+                rows.forEach(row => row.style.display = '');
+                return;
+            }
+
+            const searchLower = searchTerm.toLowerCase();
+            const rows = tableBody.querySelectorAll('tr');
+            let hasVisibleRows = false;
             
-            tableBody.innerHTML = filteredStock.length > 0 ? filteredStock.map((item, index) => renderStockRow(item, index)).join('') : `
-                <tr><td colspan="5" class="text-center py-4 text-gray-500">Nenhum item encontrado com este filtro.</td></tr>
-            `;
-            lucide.createIcons();
+            rows.forEach(row => {
+                // Pula a linha de mensagem de estoque vazio
+                if (row.querySelector('td[colspan]')) {
+                    return;
+                }
+                
+                const name = row.cells[0].textContent.toLowerCase();
+                const model = row.cells[1].textContent.toLowerCase();
+                
+                if (name.includes(searchLower) || model.includes(searchLower)) {
+                    row.style.display = '';
+                    hasVisibleRows = true;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            // Mostra mensagem se nenhum item for encontrado
+            const noItemsRow = tableBody.querySelector('tr[data-no-items]');
+            if (noItemsRow) {
+                noItemsRow.style.display = hasVisibleRows ? 'none' : '';
+            }
+        }
+
+        // Adiciona o evento de busca
+        searchInput.addEventListener('input', (e) => {
+            filterStockItems(e.target.value.trim());
         });
     }
 
