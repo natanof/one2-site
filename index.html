@@ -998,7 +998,7 @@
                     htmlContent = renderDashboard(orders || [], stock || [], models || []);
                     break;
                 case 'new-order':
-                    htmlContent = renderNewOrderForm(models || [], services || []);
+                    htmlContent = renderNewOrderForm(models || [], services || [], stock || []);
                     break;
                 case 'manage-orders':
                     htmlContent = await renderManageOrders();
@@ -1024,7 +1024,7 @@
                 if (viewName === 'dashboard') {
                     await initializeDashboardChart(await generateRevenueLog());
                 } else if (viewName === 'new-order') {
-                    initializeNewOrderLogic(models, services);
+                    initializeNewOrderLogic(models, services, stock);
                 } else if (viewName === 'manage-orders') {
                     initializeManageOrdersLogic(orders);
                 } else if (viewName === 'stock') {
@@ -1159,7 +1159,7 @@
     /**
      * View B: Novo Pedido de Serviço
      */
-    function renderNewOrderForm(models, services) {
+    function renderNewOrderForm(models, services, stock) {
         const customCase = getCustomCase();
         
         const modelOptions = models.map(m => 
@@ -1175,6 +1175,39 @@
                 <span class="text-sm font-semibold text-primary-blue">R$ ${s.price.toFixed(2).replace('.', ',')}</span>
             </div>
         `).join('');
+        
+        const stockProductsCheckboxes = `
+            <div class="flex items-center justify-between p-3 bg-bg-light rounded-lg mb-3">
+                <label for="product-none" class="text-text-dark font-medium flex items-center cursor-pointer">
+                    <input type="checkbox" id="product-none" data-price="0" data-name="Nenhum produto (cliente já possui)" data-id="none"
+                           class="product-checkbox w-4 h-4 text-primary-blue bg-gray-100 border-gray-300 rounded focus:ring-primary-blue" checked>
+                    <span class="ml-2">Nenhum produto (cliente já possui)</span>
+                </label>
+                <div class="flex flex-col items-end">
+                    <span class="text-sm font-semibold text-primary-blue">R$ 0,00</span>
+                </div>
+            </div>
+        ` + (stock && stock.length > 0 ? stock.map((item, index) => {
+            const isAvailable = item.quantity > 0;
+            const availabilityClass = isAvailable ? 'bg-bg-light' : 'bg-red-100';
+            const availabilityText = isAvailable ? `Disponível (${item.quantity})` : 'Indisponível';
+            const availabilityTextClass = isAvailable ? 'text-green-600' : 'text-red-600';
+            
+            return `
+                <div class="flex items-center justify-between p-3 ${availabilityClass} rounded-lg">
+                    <label for="product-${index}" class="text-text-dark font-medium flex items-center cursor-pointer ${!isAvailable ? 'opacity-50' : ''}">
+                        <input type="checkbox" id="product-${index}" data-price="${item.cost * 1.5}" data-name="${item.name}" data-id="${item.id}" data-quantity="${item.quantity}"
+                               class="product-checkbox w-4 h-4 text-primary-blue bg-gray-100 border-gray-300 rounded focus:ring-primary-blue"
+                               ${!isAvailable ? 'disabled' : ''}>
+                        <span class="ml-2">${item.name} ${item.compatibleModel ? `(${item.compatibleModel})` : ''}</span>
+                    </label>
+                    <div class="flex flex-col items-end">
+                        <span class="text-sm font-semibold text-primary-blue">R$ ${(item.cost * 1.5).toFixed(2).replace('.', ',')}</span>
+                        <span class="text-xs ${availabilityTextClass}">${availabilityText}</span>
+                    </div>
+                </div>
+            `;
+        }).join('') : '<p class="text-gray-500 text-center py-3">Nenhum produto disponível no estoque.</p>');
 
         const customCaseDisplay = customCase ? `
             <div id="custom-case-display" class="p-3 bg-secondary-blue/20 rounded-lg flex justify-between items-center mb-4">
@@ -1225,6 +1258,13 @@
                             </div>
                         </div>
 
+                        <div class="card p-6">
+                            <h2 class="text-xl font-semibold mb-4 text-text-dark">Produtos do Estoque</h2>
+                            <div class="space-y-2" id="stock-products-container">
+                                ${stockProductsCheckboxes}
+                            </div>
+                        </div>
+
                         <button type="submit" class="btn-primary w-full p-3 rounded-xl text-white font-semibold">
                             <i data-lucide="save" class="w-5 h-5 inline-block mr-2"></i>
                             Concluir Pedido (Gerar OS)
@@ -1260,12 +1300,42 @@
     /**
      * Inicializa a lógica de Novo Pedido (cálculo em tempo real e submissão).
      */
-    function initializeNewOrderLogic(models, services) {
+    function initializeNewOrderLogic(models, services, stock) {
         const form = document.getElementById('new-order-form');
-        const checkboxes = document.querySelectorAll('.service-checkbox');
+        const serviceCheckboxes = document.querySelectorAll('.service-checkbox');
+        const productCheckboxes = document.querySelectorAll('.product-checkbox');
         const summaryList = document.getElementById('service-summary');
         const totalDisplay = document.getElementById('order-total');
         const customCase = getCustomCase();
+        
+        // Lógica para a opção "Nenhuma" nos produtos
+        const productNoneCheckbox = document.getElementById('product-none');
+        if (productNoneCheckbox) {
+            productNoneCheckbox.addEventListener('change', function() {
+                if (this.checked) {
+                    // Se "Nenhuma" for selecionado, desmarque todos os outros produtos
+                    productCheckboxes.forEach(checkbox => {
+                        if (checkbox.id !== 'product-none') {
+                            checkbox.checked = false;
+                        }
+                    });
+                }
+                updateSummary();
+            });
+            
+            // Adiciona evento para os outros produtos
+            productCheckboxes.forEach(checkbox => {
+                if (checkbox.id !== 'product-none') {
+                    checkbox.addEventListener('change', function() {
+                        if (this.checked && productNoneCheckbox.checked) {
+                            // Se algum produto for selecionado, desmarque a opção "Nenhuma"
+                            productNoneCheckbox.checked = false;
+                        }
+                        updateSummary();
+                    });
+                }
+            });
+        }
 
         /** Calcula e atualiza o resumo e o total */
         function updateSummary() {
@@ -1274,7 +1344,7 @@
             const selectedServices = [];
 
             // 1. Serviços Padrão
-            checkboxes.forEach(checkbox => {
+            serviceCheckboxes.forEach(checkbox => {
                 if (checkbox.checked) {
                     const price = parseFloat(checkbox.getAttribute('data-price'));
                     const name = checkbox.getAttribute('data-name');
@@ -1283,8 +1353,19 @@
                     summaryHtml += `<li class="flex justify-between"><span>${name}</span><span class="font-semibold">R$ ${price.toFixed(2).replace('.', ',')}</span></li>`;
                 }
             });
+            
+            // 2. Produtos do Estoque
+            productCheckboxes.forEach(checkbox => {
+                if (checkbox.checked) {
+                    const price = parseFloat(checkbox.getAttribute('data-price'));
+                    const name = checkbox.getAttribute('data-name');
+                    total += price;
+                    selectedServices.push({ name, price });
+                    summaryHtml += `<li class="flex justify-between text-green-600"><span>${name}</span><span class="font-semibold">R$ ${price.toFixed(2).replace('.', ',')}</span></li>`;
+                }
+            });
 
-            // 2. Capinha Personalizada (se existir)
+            // 3. Capinha Personalizada (se existir)
             if (customCase) {
                 total += customCase.price;
                 selectedServices.push({ name: `Capinha Personalizada - ${customCase.color} (${customCase.type})`, price: customCase.price, custom: true });
@@ -1297,7 +1378,7 @@
             }
 
             if (summaryHtml === '') {
-                summaryHtml = `<li class="py-1 text-gray-500">Nenhum serviço selecionado.</li>`;
+                summaryHtml = `<li class="py-1 text-gray-500">Nenhum item selecionado.</li>`;
             }
 
             summaryList.innerHTML = summaryHtml;
@@ -1305,7 +1386,11 @@
         }
 
         // Adiciona listeners para cálculo em tempo real
-        checkboxes.forEach(checkbox => {
+        serviceCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', updateSummary);
+        });
+        
+        productCheckboxes.forEach(checkbox => {
             checkbox.addEventListener('change', updateSummary);
         });
 
@@ -1328,9 +1413,34 @@
             
             try {
                 const selectedItems = [];
-                checkboxes.forEach(cb => {
+                const stockUpdates = [];
+                
+                // Adiciona serviços selecionados
+                serviceCheckboxes.forEach(cb => {
                     if (cb.checked) {
-                        selectedItems.push({ name: cb.getAttribute('data-name'), price: parseFloat(cb.getAttribute('data-price')) });
+                        selectedItems.push({ 
+                            name: cb.getAttribute('data-name'), 
+                            price: parseFloat(cb.getAttribute('data-price')),
+                            type: 'service'
+                        });
+                    }
+                });
+                
+                // Adiciona produtos selecionados
+                productCheckboxes.forEach(cb => {
+                    if (cb.checked) {
+                        const productId = cb.getAttribute('data-id');
+                        selectedItems.push({ 
+                            name: cb.getAttribute('data-name'), 
+                            price: parseFloat(cb.getAttribute('data-price')),
+                            type: 'product',
+                            product_id: productId
+                        });
+                        
+                        // Adiciona à lista de atualizações de estoque
+                        stockUpdates.push({
+                            id: productId
+                        });
                     }
                 });
 
@@ -1338,12 +1448,13 @@
                     selectedItems.push({ 
                         name: `Capinha Personalizada - ${customCase.color} (${customCase.type})`, 
                         price: customCase.price,
-                        custom: true
+                        custom: true,
+                        type: 'custom'
                     });
                 }
 
                 if (selectedItems.length === 0) {
-                    showToast('Selecione pelo menos um serviço!', 'warning');
+                    showToast('Selecione pelo menos um serviço ou produto!', 'warning');
                     return;
                 }
 
@@ -1359,7 +1470,36 @@
                 };
 
                 const order = await saveOrder(newOrder);
+                
                 if (order) {
+                    // Atualiza o estoque para cada produto selecionado
+                    if (stockUpdates.length > 0) {
+                        for (const item of stockUpdates) {
+                            try {
+                                // Busca o item atual do estoque
+                                const { data: stockItem, error: getError } = await supabase
+                                    .from('stock')
+                                    .select('*')
+                                    .eq('id', item.id)
+                                    .single();
+                                
+                                if (getError) throw getError;
+                                
+                                if (stockItem && stockItem.quantity > 0) {
+                                    // Atualiza a quantidade no estoque (reduz em 1)
+                                    const { error: updateError } = await supabase
+                                        .from('stock')
+                                        .update({ quantity: stockItem.quantity - 1 })
+                                        .eq('id', item.id);
+                                    
+                                    if (updateError) throw updateError;
+                                }
+                            } catch (stockError) {
+                                console.error(`Erro ao atualizar estoque:`, stockError);
+                            }
+                        }
+                    }
+                    
                     setCustomCase(null);
                     showToast(`Pedido #${order.id} salvo com sucesso!`, 'success');
                     // Espera um momento para garantir que o toast seja visto
