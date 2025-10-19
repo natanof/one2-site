@@ -1431,7 +1431,7 @@
             `;
         }
 
-            <!-- Tabela encapsulada em overflow-x-auto para responsividade -->
+        return `
             <div class="card p-6 overflow-x-auto">
                 <table class="min-w-full divide-y divide-gray-200">
                     <thead class="bg-bg-light">
@@ -1508,91 +1508,10 @@
     }
 
     function initializeManageOrdersLogic(allOrders) {
-        // Aguarda um momento para garantir que o DOM foi atualizado
         // Aguarda o próximo ciclo do event loop para garantir que o DOM foi atualizado
         setTimeout(() => {
-            // Garante que os elementos existem antes de tentar usá-los
-            const container = document.getElementById('manage-orders-container');
-            if (!container) {
-                console.error('Container de gerenciamento de pedidos não encontrado');
-                return;
-            }
-            
-            const searchInput = document.getElementById('order-search');
-            const tableBody = document.getElementById('orders-table-body');
-            
-            // Se os elementos necessários não existirem, retorna sem tentar inicializar
-            if (!searchInput || !tableBody) {
-                console.error('Elementos necessários não encontrados para gerenciamento de pedidos');
-                return;
-            }
-
-            // Uma vez que encontramos os elementos, podemos inicializar os eventos
-
-        let currentOrders = []; // Armazena os pedidos atuais
-        
-        // Atualiza a lista de pedidos
-        async function updateOrdersList() {
-            try {
-                if (!tableBody) return; // Verifica novamente se o elemento existe
-                
-                tableBody.innerHTML = `
-                    <tr>
-                        <td colspan="7" class="text-center py-4 text-gray-500">
-                            <i data-lucide="loader" class="w-6 h-6 animate-spin mx-auto mb-2"></i>
-                            Carregando pedidos...
-                        </td>
-                    </tr>
-                `;
-                if (typeof lucide !== 'undefined') {
-                    lucide.createIcons();
-                }
-
-                const { data: orders, error } = await supabase
-                    .from('orders')
-                    .select('*, order_services(*)')
-                    .order('created_at', { ascending: false });
-
-                if (error) throw error;
-
-                currentOrders = orders || []; // Atualiza a lista local
-
-                if (!orders || orders.length === 0) {
-                    tableBody.innerHTML = `
-                        <tr><td colspan="7" class="text-center py-4 text-gray-500">Nenhum pedido encontrado.</td></tr>
-                    `;
-                } else {
-                    tableBody.innerHTML = orders.map(order => renderOrderRow(order)).join('');
-                }
-                lucide.createIcons();
-
-                return orders;
-            } catch (error) {
-                console.error('Error fetching orders:', error);
-                showToast('Erro ao carregar pedidos: ' + error.message, 'danger');
-                tableBody.innerHTML = `
-                    <tr><td colspan="7" class="text-center py-4 text-red-500">Erro ao carregar pedidos. Tente novamente.</td></tr>
-                `;
-                return [];
-            }
-        }
-
-        // Atualiza a lista inicial
-        updateOrdersList();
-
-        // Função de busca atualizada para usar currentOrders
-        searchInput.addEventListener('input', function() {
-            const searchTerm = searchInput.value.toLowerCase();
-            const filteredOrders = currentOrders.filter(order => {
-                const searchString = `${order.id} ${order.client_name} ${order.device_model}`.toLowerCase();
-                return searchString.includes(searchTerm);
-            });
-            
-            tableBody.innerHTML = filteredOrders.length > 0 ? filteredOrders.map(renderOrderRow).join('') : `
-                <tr><td colspan="7" class="text-center py-4 text-gray-500">Nenhum pedido encontrado com este termo.</td></tr>
-            `;
-            lucide.createIcons();
-        });
+            // Adicione aqui a lógica de inicialização dos listeners e atualizações de UI
+        }, 0);
     }
 
     window.updateOrderStatus = async function(orderId, newStatus) {
