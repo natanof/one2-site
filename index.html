@@ -2377,11 +2377,19 @@
     }
 
     function hideModal() {
+        const modal = document.getElementById('custom-modal');
         if (modal) {
             modal.classList.add('hidden');
             modal.style.display = 'none'; // Garante que o modal realmente suma
+            // Força reflow para garantir que o modal desapareça
+            void modal.offsetWidth;
         }
         modalCallback = null;
+        // Remove foco de qualquer botão do modal
+        const cancelBtn = document.getElementById('modal-cancel-btn');
+        const confirmBtn = document.getElementById('modal-confirm-btn');
+        if (cancelBtn) cancelBtn.blur();
+        if (confirmBtn) confirmBtn.blur();
     }
 
     // Inicializa a modal
