@@ -7,6 +7,7 @@
     <!-- Carregamento do Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Supabase Client Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
     <script type="module">
         import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/+esm'
         
@@ -37,6 +38,13 @@
 
     <!-- Configurações do Tailwind e outras bibliotecas -->
     <script>
+        // Garante que o Supabase está disponível globalmente
+        if (!window.supabase) {
+            const supabaseUrl = 'https://qghjrmnmsifvfzldeezw.supabase.co';
+            const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFnaGpybW5tc2lmdmZ6bGRlZXp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA3MzgxMzMsImV4cCI6MjA3NjMxNDEzM30.ka1W83KCn1YvWYNH21xl1Wrck26T_oqvU0VH_biwkCI';
+            window.supabase = createClient(supabaseUrl, supabaseKey);
+        }
+
         // Funções de acesso ao Supabase
         async function getData() {
             try {
@@ -157,52 +165,51 @@
         }
 
         async function deleteOrder(orderId) {
-            try {
-                showModal('Confirmação de Exclusão', `Tem certeza que deseja excluir o Pedido #${orderId}? Esta ação não pode ser desfeita.`, async () => {
-                    try {
-                        // Desabilita o botão durante a exclusão
-                        const deleteButton = document.querySelector(`button[data-delete-order="${orderId}"]`);
-                        if (deleteButton) {
-                            deleteButton.disabled = true;
-                            deleteButton.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i>`;
-                            lucide.createIcons();
-                        }
-
-                        // Primeiro deleta os serviços relacionados
-                        await supabase
-                            .from('order_services')
-                            .delete()
-                            .eq('order_id', orderId);
-
-                        // Depois deleta o pedido
-                        const { error } = await supabase
-                            .from('orders')
-                            .delete()
-                            .eq('id', orderId);
-
-                        if (error) throw error;
-                        showToast(`Pedido #${orderId} excluído com sucesso.`, 'success');
-                        
-                        // Recarrega os dados e atualiza a view
-                        await getData();
-                        navigateTo('manage-orders');
-                    } catch (error) {
-                        console.error('Error deleting order:', error);
-                        showToast('Erro ao excluir pedido: ' + error.message, 'danger');
-                        
-                        // Restaura o botão em caso de erro
-                        const deleteButton = document.querySelector(`button[data-delete-order="${orderId}"]`);
-                        if (deleteButton) {
-                            deleteButton.disabled = false;
-                            deleteButton.innerHTML = `<i data-lucide="trash" class="w-4 h-4"></i>`;
-                            lucide.createIcons();
-                        }
-                    }
-                });
-            } catch (error) {
-                console.error('Error showing confirmation:', error);
-                showToast('Erro ao processar a exclusão', 'danger');
+            if (!window.supabase) {
+                showToast('Conexão com Supabase não inicializada', 'danger');
+                return;
             }
+            showModal('Confirmação de Exclusão', `Tem certeza que deseja excluir o Pedido #${orderId}? Esta ação não pode ser desfeita.`, async () => {
+                try {
+                    // Desabilita o botão durante a exclusão
+                    const deleteButton = document.querySelector(`button[data-delete-order="${orderId}"]`);
+                    if (deleteButton) {
+                        deleteButton.disabled = true;
+                        deleteButton.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i>`;
+                        lucide.createIcons();
+                    }
+
+                    // Primeiro deleta os serviços relacionados
+                    await supabase
+                        .from('order_services')
+                        .delete()
+                        .eq('order_id', orderId);
+
+                    // Depois deleta o pedido
+                    const { error } = await supabase
+                        .from('orders')
+                        .delete()
+                        .eq('id', orderId);
+
+                    if (error) throw error;
+                    showToast(`Pedido #${orderId} excluído com sucesso.`, 'success');
+                    
+                    // Recarrega os dados e atualiza a view
+                    await getData();
+                    navigateTo('manage-orders');
+                } catch (error) {
+                    console.error('Error deleting order:', error);
+                    showToast('Erro ao excluir pedido: ' + error.message, 'danger');
+                    
+                    // Restaura o botão em caso de erro
+                    const deleteButton = document.querySelector(`button[data-delete-order="${orderId}"]`);
+                    if (deleteButton) {
+                        deleteButton.disabled = false;
+                        deleteButton.innerHTML = `<i data-lucide="trash" class="w-4 h-4"></i>`;
+                        lucide.createIcons();
+                    }
+                }
+            });
         }
 
         async function saveStockItem(item) {
@@ -256,54 +263,52 @@
         }
 
         async function deleteStockItem(id) {
-            try {
-                // Mostra confirmação antes de deletar
-                showModal('Confirmação de Exclusão', 'Tem certeza que deseja excluir este item do estoque? Esta ação não pode ser desfeita.', async () => {
-                    try {
-                        // Desabilita o botão durante a exclusão
-                        const deleteButton = document.querySelector(`button[data-delete-stock="${id}"]`);
-                        if (deleteButton) {
-                            deleteButton.disabled = true;
-                            deleteButton.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i>`;
-                            lucide.createIcons();
-                        }
-
-                        if (!supabase) {
-                            throw new Error('Conexão com Supabase não inicializada');
-                        }
-
-                        if (!id) {
-                            throw new Error('ID do item não fornecido');
-                        }
-
-                        const { error } = await supabase
-                            .from('stock')
-                            .delete()
-                            .eq('id', id);
-
-                        if (error) {
-                            throw error;
-                        }
-
-                        showToast('Item removido do estoque com sucesso.', 'success');
-                        await updateStockList();
-                    } catch (error) {
-                        console.error('Erro ao deletar item:', error);
-                        showToast('Erro ao remover item: ' + error.message, 'danger');
-
-                        // Restaura o botão em caso de erro
-                        const deleteButton = document.querySelector(`button[data-delete-stock="${id}"]`);
-                        if (deleteButton) {
-                            deleteButton.disabled = false;
-                            deleteButton.innerHTML = `<i data-lucide="trash" class="w-4 h-4"></i>`;
-                            lucide.createIcons();
-                        }
-                    }
-                });
-            } catch (error) {
-                console.error('Erro ao mostrar confirmação:', error);
-                showToast('Erro ao processar a exclusão', 'danger');
+            if (!window.supabase) {
+                showToast('Conexão com Supabase não inicializada', 'danger');
+                return;
             }
+            showModal('Confirmação de Exclusão', 'Tem certeza que deseja excluir este item do estoque? Esta ação não pode ser desfeita.', async () => {
+                try {
+                    // Desabilita o botão durante a exclusão
+                    const deleteButton = document.querySelector(`button[data-delete-stock="${id}"]`);
+                    if (deleteButton) {
+                        deleteButton.disabled = true;
+                        deleteButton.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i>`;
+                        lucide.createIcons();
+                    }
+
+                    if (!supabase) {
+                        throw new Error('Conexão com Supabase não inicializada');
+                    }
+
+                    if (!id) {
+                        throw new Error('ID do item não fornecido');
+                    }
+
+                    const { error } = await supabase
+                        .from('stock')
+                        .delete()
+                        .eq('id', id);
+
+                    if (error) {
+                        throw error;
+                    }
+
+                    showToast('Item removido do estoque com sucesso.', 'success');
+                    await updateStockList();
+                } catch (error) {
+                    console.error('Erro ao deletar item:', error);
+                    showToast('Erro ao remover item: ' + error.message, 'danger');
+
+                    // Restaura o botão em caso de erro
+                    const deleteButton = document.querySelector(`button[data-delete-stock="${id}"]`);
+                    if (deleteButton) {
+                        deleteButton.disabled = false;
+                        deleteButton.innerHTML = `<i data-lucide="trash" class="w-4 h-4"></i>`;
+                        lucide.createIcons();
+                    }
+                }
+            });
         }
 
         async function generateRevenueLog() {
@@ -986,7 +991,7 @@
                     htmlContent = renderNewOrderForm(models || [], services || []);
                     break;
                 case 'manage-orders':
-                    htmlContent = renderManageOrders(orders || []);
+                    htmlContent = await renderManageOrders();
                     break;
                 case 'stock':
                     htmlContent = renderStockControl(stock || []);
@@ -1557,6 +1562,10 @@
     }
 
     window.deleteOrder = function(orderId) {
+        if (!window.supabase) {
+            showToast('Conexão com Supabase não inicializada', 'danger');
+            return;
+        }
         showModal('Confirmação de Exclusão', `Tem certeza que deseja excluir o Pedido #${orderId}? Esta ação não pode ser desfeita.`, async () => {
             try {
                 // Desabilita o botão durante a exclusão
@@ -1818,6 +1827,10 @@
     }
 
     window.deleteStockItem = function(itemId) {
+        if (!window.supabase) {
+            showToast('Conexão com Supabase não inicializada', 'danger');
+            return;
+        }
         showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este item do estoque? Esta ação não pode ser desfeita.`, async () => {
             try {
                 // Desabilita o botão durante a exclusão
@@ -2246,6 +2259,10 @@
     }
 
     window.deleteModel = function(modelId) {
+        if (!window.supabase) {
+            showToast('Conexão com Supabase não inicializada', 'danger');
+            return;
+        }
         showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este modelo? Esta ação não pode ser desfeita.`, async () => {
             try {
                 // Desabilita o botão durante a exclusão
@@ -2307,6 +2324,10 @@
     }
 
     window.deleteService = function(serviceId) {
+        if (!window.supabase) {
+            showToast('Conexão com Supabase não inicializada', 'danger');
+            return;
+        }
         showModal('Confirmação de Exclusão', `Tem certeza que deseja remover este serviço? Esta ação não pode ser desfeita.`, async () => {
             try {
                 // Desabilita o botão durante a exclusão
@@ -2350,21 +2371,25 @@
     const modal = document.getElementById('custom-modal');
     
     function showModal(title, body, confirmAction) {
-        document.getElementById('modal-title').textContent = title;
-        document.getElementById('modal-body').textContent = body;
+        const modalTitle = document.getElementById('modal-title');
+        const modalBody = document.getElementById('modal-body');
+        if (modalTitle) modalTitle.textContent = title;
+        if (modalBody) modalBody.textContent = body;
         modalCallback = confirmAction;
-        modal.classList.remove('hidden');
+        if (modal) modal.classList.remove('hidden');
     }
 
     function hideModal() {
-        modal.classList.add('hidden');
+        if (modal) modal.classList.add('hidden');
         modalCallback = null;
     }
 
     // Inicializa a modal
     document.addEventListener('DOMContentLoaded', () => {
-        document.getElementById('modal-cancel-btn')?.addEventListener('click', hideModal);
-        document.getElementById('modal-confirm-btn')?.addEventListener('click', () => {
+        const cancelBtn = document.getElementById('modal-cancel-btn');
+        const confirmBtn = document.getElementById('modal-confirm-btn');
+        if (cancelBtn) cancelBtn.addEventListener('click', hideModal);
+        if (confirmBtn) confirmBtn.addEventListener('click', () => {
             if (modalCallback) {
                 modalCallback();
             }
