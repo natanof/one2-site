@@ -1766,6 +1766,9 @@
         // Carrega o estoque inicial
         updateStockList().then(updateTableContent);
 
+        // Torna updateStockList global
+        window.updateStockList = updateStockList;
+
         let isSubmitting = false;
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
