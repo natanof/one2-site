@@ -1,0 +1,11 @@
+[build]
+  publish = "/"
+  
+[[redirects]]
+  from = "/auth-app/load"
+  to = "/.netlify/functions/load-app"
+  status = 200
+  force = true
+  
+[functions]
+  directory = "netlify/functions"
