@@ -556,20 +556,60 @@
                 /* Links do Dock: Icones centralizados e fluídos */
                 justify-content: center;
                 position: relative;
-                color: rgba(255, 255, 255, 0.9); /* Cor mais clara no dock de vidro */
-                transition: all 0.25s ease-in-out; /* Transição para hover/ativo */
+                /* Use texto escuro semi-transparente para melhorar contraste em fundo claro */
+                color: rgba(30, 41, 59, 0.85); /* var(--color-text-dark) com leve transparência */
+                transition: all 0.22s ease-in-out; /* Transição para hover/ativo */
+                padding: 0.6rem; /* um pouco mais de área clicável */
+                display: flex;
+                align-items: center;
+            }
+
+            /* Estado dos itens não ativos: levemente desaturados, porém legíveis */
+            .dock-link:not(.active) {
+                color: rgba(30, 41, 59, 0.65);
+                background-color: transparent;
+                opacity: 0.95;
             }
 
             .dock-link:hover {
-                background-color: rgba(255, 255, 255, 0.25); /* Hover mais nítido */
-                transform: scale(1.05); /* Pequeno efeito de zoom/push */
+                background-color: rgba(255, 255, 255, 0.32); /* Hover mais nítido */
+                transform: translateY(-2px) scale(1.03); /* efeito sutil */
+                color: rgba(30, 41, 59, 0.95);
             }
 
             .dock-link.active {
                 /* Active: Brilho + Inset Shadow para Profundidade */
                 color: var(--color-primary); /* Usa variável */
-                background-color: rgba(255, 255, 255, 0.3); /* Fundo suave */
-                /* A sombra será aplicada via JS/inline para incluir o complexo inset */
+                background-color: rgba(255, 255, 255, 0.45); /* Fundo mais visível para destaque */
+                box-shadow: 0 6px 18px rgba(59, 130, 246, 0.18), inset 0 1px 0 rgba(255,255,255,0.6);
+            }
+            /* --- Dock Glider (inspirado no glass-glider) --- */
+            .dock-glider {
+                position: absolute;
+                left: 0.25rem; /* alinhado com o padding do dock */
+                right: 0.25rem;
+                width: calc(100% - 0.5rem);
+                height: 3.2rem; /* altura aproximada de cada item */
+                border-radius: 1rem;
+                z-index: 0;
+                background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+                box-shadow:
+                    inset 1px 1px 6px rgba(255,255,255,0.06),
+                    inset -1px -1px 8px rgba(0,0,0,0.25),
+                    0 8px 20px rgba(0,0,0,0.12);
+                transform: translateY(0%);
+                transition: transform 0.5s cubic-bezier(0.37, 1.95, 0.66, 0.56), background 0.35s ease-in-out, box-shadow 0.35s ease-in-out;
+                pointer-events: none;
+            }
+
+            /* Variant colors when moved via JS (we'll toggle data-color) */
+            .dock-glider[data-color="primary"] {
+                background: linear-gradient(180deg, rgba(59,130,246,0.12), rgba(59,130,246,0.06));
+                box-shadow: 0 8px 20px rgba(59,130,246,0.12), inset 0 0 6px rgba(255,255,255,0.25);
+            }
+            .dock-glider[data-color="muted"] {
+                background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+                box-shadow: 0 6px 16px rgba(0,0,0,0.08), inset 0 0 6px rgba(255,255,255,0.06);
             }
         }
     </style>
@@ -591,6 +631,8 @@
         
         <nav class="flex-grow space-y-2">
             <!-- Os links foram ajustados para serem ícone-only no desktop (dock-link) -->
+            <!-- Dock glider: highlight that slides to the active item (animated) -->
+            <div class="dock-glider" aria-hidden="true"></div>
             
             <!-- Nav Item: Dashboard -->
             <a href="#" data-view="dashboard" class="nav-link dock-link flex items-center p-3 rounded-xl text-text-dark active">
@@ -687,6 +729,48 @@
             localStorage.setItem(LS_KEY, JSON.stringify(defaultData));
         }
     }
+
+    /* --- Dock Glider: position and behavior --- */
+    function moveDockGlider() {
+        try {
+            const glider = document.querySelector('.dock-glider');
+            const dock = document.getElementById('sidebar');
+            if (!glider || !dock) return;
+
+            // Find active link (desktop)
+            const links = dock.querySelectorAll('.dock-link');
+            let activeIndex = -1;
+            links.forEach((l, i) => { if (l.classList.contains('active')) activeIndex = i; });
+
+            // If no active, collapse to top (or keep first visible)
+            const targetIndex = activeIndex >= 0 ? activeIndex : 0;
+
+            // Compute vertical translation based on link position
+            const firstLink = links[0];
+            if (!firstLink) return;
+
+            const linkHeight = firstLink.getBoundingClientRect().height + parseFloat(getComputedStyle(firstLink).marginTop || 0) + parseFloat(getComputedStyle(firstLink).marginBottom || 0);
+            const offset = targetIndex * linkHeight;
+
+            // Set transform
+            glider.style.transform = `translateY(${offset}px)`;
+
+            // Toggle color accent when active is the dashboard (example)
+            const activeLink = links[targetIndex];
+            if (activeLink && activeLink.classList.contains('active')) {
+                glider.setAttribute('data-color', 'primary');
+            } else {
+                glider.setAttribute('data-color', 'muted');
+            }
+        } catch (e) {
+            // fail silently
+            console.error('moveDockGlider error', e);
+        }
+    }
+
+    // Reposition on load and resize
+    window.addEventListener('load', () => setTimeout(moveDockGlider, 50));
+    window.addEventListener('resize', () => setTimeout(moveDockGlider, 50));
 
     /**
      * Gera um log de receita mock para o gráfico.
@@ -809,6 +893,27 @@
             const dummyUserId = crypto.randomUUID().substring(0, 8); // Simula o ID do usuário
             userIdDisplay.textContent = dummyUserId;
         }
+
+        // Bind click behavior for nav links to use our navigateTo and update glider
+        const navLinks = document.querySelectorAll('.nav-link');
+        navLinks.forEach(link => {
+            // prevent default and navigate
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const view = link.getAttribute('data-view');
+                if (view) navigateTo(view);
+                // move glider immediately for snappier feedback
+                setTimeout(moveDockGlider, 10);
+            });
+
+            // keyboard accessibility
+            link.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    link.click();
+                }
+            });
+        });
     }
 
     /**
@@ -901,7 +1006,7 @@
             toggleSidebar();
         }
 
-        // Atualiza a navegação ativa
+        // Atualiza a navegação ativa (aplica apenas classes — não força estilos inline)
         document.querySelectorAll('.nav-link').forEach(link => {
             const isActive = link.getAttribute('data-view') === viewName;
             link.classList.toggle('active', isActive);
@@ -924,23 +1029,26 @@
             
                 // Lógica de Dock (Desktop)
                 if (window.innerWidth >= 768) {
-                    // Remove estilos ativos e reset
+                    // Remove estilos ativos e reset; do NOT set inline color so CSS controls visibility
                     link.classList.remove('bg-white/30'); 
                     link.style.boxShadow = 'none'; 
-                    link.style.color = 'rgba(255, 255, 255, 0.9)'; 
+                    link.style.removeProperty('color');
                 }
                 
                 if (link.getAttribute('data-view') === viewName) {
                     link.classList.add('active');
                     
-                    // Aplica estilos ativos do Dock Moderno
+                    // Aplica estilos ativos do Dock Moderno (prefira classes/CSS em vez de inline)
                     if (window.innerWidth >= 768) {
                         link.classList.add('bg-white/30');
-                        link.style.color = 'var(--color-primary)';
+                        // Use boxShadow inline for stronger effect but keep color to CSS
                         link.style.boxShadow = '0 0 15px rgba(59, 130, 246, 0.8), inset 0 0 5px rgba(255, 255, 255, 0.6)'; 
                     }
                 }
             });
+
+            // Move the dock glider to the active item (if present)
+            setTimeout(() => moveDockGlider(), 10);
 
             setTimeout(() => {
                 activeView = viewName;
